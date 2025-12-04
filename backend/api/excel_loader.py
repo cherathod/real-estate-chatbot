@@ -1,8 +1,8 @@
 from pathlib import Path
 import pandas as pd
 
-# Default sample path (update if you store sample somewhere else)
-BASE_DIR = Path(__file__).resolve().parents[1]  # backend/api/.. -> backend
+# Default path (update if you store sample somewhere else)
+BASE_DIR = Path(__file__).resolve().parents[1]  
 SAMPLE_XLSX = BASE_DIR / "dataset" / "dataset.xlsx"   # put sample file here
 
 

@@ -4,14 +4,8 @@ import math
 import pandas as pd
 
 
-# -------------------------------------------------------------------
-# 1. GLOBAL SUMMARY (REQUIRED BY views.py)
-# -------------------------------------------------------------------
 def generate_summary(df: pd.DataFrame) -> dict:
-    """
-    Summary of entire dataset for dashboard home.
-    Returns dict → consumed by frontend.
-    """
+    
 
     if df is None or df.empty:
         return {
@@ -31,14 +25,9 @@ def generate_summary(df: pd.DataFrame) -> dict:
     return summary
 
 
-# -------------------------------------------------------------------
-# 2. AREA-LEVEL NATURAL LANGUAGE SUMMARY (MOCK-LLM)
-# -------------------------------------------------------------------
+
 def generate_summary_for_area(df, area_name: Optional[str] = None) -> str:
-    """
-    Generate a concise natural-language summary for a DataFrame slice.
-    Deterministic; mock-LLM style.
-    """
+
 
     if df is None or df.empty:
         if area_name:
@@ -84,9 +73,7 @@ def generate_summary_for_area(df, area_name: Optional[str] = None) -> str:
     return " ".join(lines)
 
 
-# -------------------------------------------------------------------
-# 3. NUMBER FORMATTING
-# -------------------------------------------------------------------
+
 def format_number(x):
     try:
         if math.isnan(x):
@@ -103,9 +90,7 @@ def format_number(x):
         return str(x)
 
 
-# -------------------------------------------------------------------
-# 4. PERCENT CHANGE TREND
-# -------------------------------------------------------------------
+
 def compute_pct_change_series(df, value_col="price", time_col="year"):
     """
     Compute percent change from earliest to latest year.

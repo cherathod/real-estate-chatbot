@@ -1,6 +1,5 @@
 # real-estate-chatbot
 
-Real Estate Chatbot & Data Analysis Dashboard
 
 React Frontend + Django REST API
 
@@ -21,26 +20,6 @@ Simple rule-based summary generator
 
 Fully API-driven backend
 
-Project Structure
-real-estate-chatbot/
-│── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   ├── App.jsx
-│   │   ├── index.css
-│   ├── package.json
-│   └── vite.config.js
-
-│── backend/
-│   ├── backend/
-│   ├── api/
-│   │   ├── views.py
-│   │   ├── utils.py
-│   │   ├── excel_loader.py
-│   ├── dataset/
-│   │   └── dataset.xlsx
-│   ├── requirements.txt
-│   └── manage.py
 
 Backend Setup (Django)
 1. Create Virtual Environment
@@ -146,11 +125,5 @@ Excel Column Issues
 Dataset must contain at least:
 
 year
-
 area
-
 price
-
-License
-
-MIT License

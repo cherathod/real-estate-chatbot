@@ -10,15 +10,6 @@ import os
 
 @api_view(["POST"])
 def analyze_area(request):
-    """
-    POST { "query": "Analyze Wakad" }
-    Response:
-    {
-      "summary": "...",
-      "chartData": [ {"year": 2021, "price": 5200.0, "demand": 3.2}, ... ],
-      "tableData": [ {...}, {...} ]
-    }
-    """
     data = request.data or {}
     query = data.get("query", "")
     # Extract area: naive approach - remove "analyze" prefix if present
@@ -68,7 +59,7 @@ def analyze_area(request):
                     "demand": demand_mean if demand_mean is not None else None
                 })
         else:
-            # No year column: produce single point aggregate (optional)
+            # No year column: produce single point aggregate
             if price_col or demand_col:
                 chartData.append({
                     "year": "",
@@ -94,10 +85,6 @@ def analyze_area(request):
 
 @api_view(["POST"])
 def upload_dataset(request):
-    """
-    Accepts file upload (form-data key: 'file').
-    Saves file to backend/dataset/dataset_uploaded.xlsx and tries to read it.
-    """
     uploaded = request.FILES.get("file")
     if not uploaded:
         return Response({"error": "No file uploaded. Use form-data with key 'file'."},
@@ -115,7 +102,7 @@ def upload_dataset(request):
         import pandas as pd
         df = pd.read_excel(str(target_path), engine="openpyxl")
         rows = len(df)
-        # Optionally, you could move or set DATASET_PATH to this file for immediate use.
+        # If you could move or set DATASET_PATH to this file for immediate use.
         return Response({"message": "File uploaded", "rows": rows}, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
