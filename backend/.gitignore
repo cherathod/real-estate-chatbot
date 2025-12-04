@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# Django
+db.sqlite3
+/staticfiles/
+
+# Excel / data
+dataset/*.xlsx
+
+# IDEs
+.vscode/
+.idea/
+
+# Node modules (if included)
+node_modules/
+
+# env
+.env

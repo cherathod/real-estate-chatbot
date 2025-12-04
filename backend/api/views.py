@@ -1,168 +1,121 @@
-"""
-backend/api/views.py
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from django.conf import settings
+from .excel_loader import load_dataset, filter_by_area
+from .utils import generate_summary, generate_summary_for_area
+import pandas as pd
+from pathlib import Path
+import os
 
-Django views for the real-estate analysis API.
-
-Endpoint: analyze_area (fixes the AttributeError you saw).
-- Accepts POST with optional file upload (key 'file') and a query param or JSON field 'area'
-- area can be a single name or multiple separated by 'vs', ',' or 'and'
-- If no file uploaded, falls back to backend/data/sample.xlsx (see excel_loader)
-"""
-from django.shortcuts import render
-import json
-import re
-from django.http import JsonResponse, HttpResponseBadRequest
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_http_methods
-
-from .excel_loader import load_data_from_upload, filter_by_areas, aggregate_time_series
-from .utils import generate_summary_for_area
-
-# Helper: parse area query string into list of areas
-def parse_area_query(area_query: str):
-    """
-    Accepts strings like:
-    - "Wakad"
-    - "Compare Ambegaon Budruk and Aundh"
-    - "Ambegaon vs Aundh"
-    - "Akurdi over last 3 years" (we will not strictly parse year span here, frontend can request)
-    Returns list of area names.
-    """
-    if not area_query:
-        return []
-
-    # remove 'compare' or similar words
-    s = area_query.lower()
-    s = s.replace("compare", "").replace("analysis of", "").replace("analysis", "")
-    # split by ' vs ', ' and ', ',', ' versus '
-    parts = re.split(r"\s+vs\s+|\s+versus\s+|,|\s+and\s+|\s+&\s+", area_query, flags=re.IGNORECASE)
-    parts = [p.strip() for p in parts if p.strip()]
-    return parts
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
+@api_view(["POST"])
 def analyze_area(request):
     """
-    Main API endpoint to analyze area(s).
-    Accepts:
-      - POST form-data with file (key 'file') and field 'area'  OR
-      - POST JSON { "area": "Wakad" } with no file (will use sample)
-    Returns JSON:
-      {
-        "summary": "...",
-        "chart": { "years": [...], "price": [...], "demand": [...] },
-        "table": [ {row}, ... ],
-        "areas": [ "Wakad" ],
-      }
+    POST { "query": "Analyze Wakad" }
+    Response:
+    {
+      "summary": "...",
+      "chartData": [ {"year": 2021, "price": 5200.0, "demand": 3.2}, ... ],
+      "tableData": [ {...}, {...} ]
+    }
     """
+    data = request.data or {}
+    query = data.get("query", "")
+    # Extract area: naive approach - remove "analyze" prefix if present
+    area = query
+    if isinstance(query, str):
+        area = query.lower().replace("analyze", "").replace("analyze:", "").strip()
+        if area == "":
+            area = query.strip()
+
+    # Load dataset
+    df = load_dataset()
+    if df is None or df.empty:
+        return Response({"error": "Dataset not found or empty. Place dataset.xlsx in backend/dataset/."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    # Filter by area
+    filtered = filter_by_area(df, area)
+
+    # Build chartData: prefer using 'Year' column, else try 'year' or 'yr'
+    year_col = next((c for c in filtered.columns if str(c).lower() in ("year", "yr")), None)
+    price_col = next((c for c in filtered.columns if "price" in str(c).lower()), None)
+    demand_col = next((c for c in filtered.columns if "demand" in str(c).lower()), None)
+
+    chartData = []
     try:
-        # parse area: prefer JSON body first, else POST params
-        area_param = None
-        if request.content_type == "application/json":
+        if year_col:
+            # convert year-like values to str/int for ordering
+            grp = filtered.copy()
+            # attempt to coerce year to int for sorting where possible
             try:
-                body = json.loads(request.body.decode("utf-8") or "{}")
-                area_param = body.get("area") or body.get("query")
+                grp[year_col] = pd.to_numeric(grp[year_col], errors='coerce').astype('Int64')
+                grouped = grp.groupby(year_col)
+                years = sorted([y for y in grouped.groups.keys() if str(y) != 'nan'])
             except Exception:
-                area_param = None
-        if not area_param:
-            # fallback to form data
-            area_param = request.POST.get("area") or request.GET.get("area") or request.POST.get("query")
+                grouped = grp.groupby(year_col)
+                years = list(grouped.groups.keys())
 
-        # load dataframe (uploaded file or sample)
-        df = load_data_from_upload(request.FILES)
-
-        # determine requested areas list
-        areas = parse_area_query(area_param) if area_param else []
-        if not areas:
-            # no areas provided: respond with aggregated overview
-            selected_df = df.copy()
+            for y in years:
+                g = grouped.get_group(y)
+                y_val = int(y) if pd.api.types.is_integer_dtype(type(y)) or (isinstance(y, (int,)) ) else str(y)
+                price_mean = float(g[price_col].mean()) if price_col in g.columns else None
+                demand_mean = float(g[demand_col].mean()) if demand_col in g.columns else None
+                # Only include keys present (None allowed)
+                chartData.append({
+                    "year": str(y_val),
+                    "price": price_mean if price_mean is not None else None,
+                    "demand": demand_mean if demand_mean is not None else None
+                })
         else:
-            selected_df = filter_by_areas(df, areas)
+            # No year column: produce single point aggregate (optional)
+            if price_col or demand_col:
+                chartData.append({
+                    "year": "",
+                    "price": float(filtered[price_col].mean()) if price_col in filtered.columns else None,
+                    "demand": float(filtered[demand_col].mean()) if demand_col in filtered.columns else None
+                })
+    except Exception as e:
+        # if grouping fails, leave chartData empty
+        print("chartData generation error:", e)
 
-        # if selected_df empty and areas were requested, send helpful message
-        if selected_df.empty and areas:
-            return JsonResponse({
-                "summary": f"No data found for requested area(s): {areas}.",
-                "chart": {"years": [], "price": [], "demand": []},
-                "table": [],
-                "areas": areas,
-            }, status=200)
+    # Table data: convert filtered df to JSON-serializable list
+    tableData = filtered.fillna("").to_dict(orient="records")
 
-        # produce time series per area if multiple areas requested
-        chart_payload = {}
-        if areas and len(areas) > 1:
-            # group each area separately to facilitate comparison
-            series = {}
-            for a in areas:
-                part = filter_by_areas(df, [a])
-                ts = aggregate_time_series(part, group_by="year")
-                # prepare arrays
-                if not ts.empty:
-                    series[a] = {
-                        "years": ts["year"].astype(int).tolist() if "year" in ts.columns else [],
-                        "price": ts["price"].round(2).tolist() if "price" in ts.columns else [],
-                        "demand": ts["demand"].astype(int).tolist() if "demand" in ts.columns else [],
-                    }
-                else:
-                    series[a] = {"years": [], "price": [], "demand": []}
-            chart_payload = {"by_area": series}
-        else:
-            # single area or overall aggregated
-            ts = aggregate_time_series(selected_df, group_by="year")
-            years = ts["year"].astype(int).tolist() if "year" in ts.columns else []
-            price = ts["price"].round(2).tolist() if "price" in ts.columns else []
-            demand = ts["demand"].astype(int).tolist() if "demand" in ts.columns else []
-            chart_payload = {"years": years, "price": price, "demand": demand}
+    # Summary
+    summary = generate_summary_for_area(filtered, area)
 
-        # prepare filtered table (serialize to JSON-able dicts)
-        # Keep only a reasonable subset of columns for front-end
-        table_df = selected_df.copy()
-        # convert any numpy/int types to python types via to_dict(orient='records')
-        table_records = table_df.fillna("").to_dict(orient="records")
-
-        # generate a mock natural-language summary
-        # For a multi-area request, generate summary per area concatenated
-        if areas and len(areas) > 1:
-            summaries = []
-            for a in areas:
-                part = filter_by_areas(df, [a])
-                summaries.append(f"{a}: {generate_summary_for_area(part, a)}")
-            summary = " ".join(summaries)
-        else:
-            summary = generate_summary_for_area(selected_df, areas[0] if areas else None)
-
-        response = {
-            "summary": summary,
-            "chart": chart_payload,
-            "table": table_records,
-            "areas": areas,
-        }
-        return JsonResponse(response, safe=False)
-    except FileNotFoundError as fe:
-        return HttpResponseBadRequest(str(fe))
-    except Exception as ex:
-        # don't expose internal traceback in production; return message
-        return JsonResponse({"error": "Internal server error", "detail": str(ex)}, status=500)
+    return Response({
+        "summary": summary,
+        "chartData": chartData,
+        "tableData": tableData
+    }, status=status.HTTP_200_OK)
 
 
-@csrf_exempt
+@api_view(["POST"])
 def upload_dataset(request):
-    """Allow uploading new Excel dataset."""
-    if request.method != "POST":
-        return JsonResponse({"error": "Only POST allowed"}, status=400)
+    """
+    Accepts file upload (form-data key: 'file').
+    Saves file to backend/dataset/dataset_uploaded.xlsx and tries to read it.
+    """
+    uploaded = request.FILES.get("file")
+    if not uploaded:
+        return Response({"error": "No file uploaded. Use form-data with key 'file'."},
+                        status=status.HTTP_400_BAD_REQUEST)
 
-    excel_file = request.FILES.get("file")
-    if not excel_file:
-        return JsonResponse({"error": "No file uploaded"}, status=400)
+    target_dir = Path(settings.BASE_DIR) / "dataset"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / "dataset_uploaded.xlsx"
 
-    # Save file
-    import os
-    from django.conf import settings
-
-    save_path = os.path.join(settings.BASE_DIR, "data", "real_estate.xlsx")
-    with open(save_path, "wb+") as dest:
-        for chunk in excel_file.chunks():
-            dest.write(chunk)
-
-    return JsonResponse({"message": "File uploaded successfully"})
+    try:
+        with open(target_path, "wb+") as dest:
+            for chunk in uploaded.chunks():
+                dest.write(chunk)
+        # attempt read
+        import pandas as pd
+        df = pd.read_excel(str(target_path), engine="openpyxl")
+        rows = len(df)
+        # Optionally, you could move or set DATASET_PATH to this file for immediate use.
+        return Response({"message": "File uploaded", "rows": rows}, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
